@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title></title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  :root { --brand:#ffaa00; --brand-dark:#0040ff; }
+  body { background:#f3f6f7; }
+  .sidebar { background:var(--brand-dark); min-height:100vh; }
+  .sidebar .nav-link { color:#cfe3e5; border-radius:.5rem; padding:.7rem 1rem; }
+  .sidebar .nav-link:hover { background:rgba(255,255,255,.08); color:#fff; }
+  .sidebar .nav-link.active { background:#fff; color:var(--brand-dark); font-weight:600; }
+  .btn-brand { background:var(--brand); color:#fff; }
+  .btn-brand:hover { background:var(--brand-dark); color:#fff; }
+  .table thead th { background:#e6eef0; white-space:nowrap; }
+  .card { border:0; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  #loading { display:none; }
+</style>
+</head>
+<body>
+<div class="container-fluid">
+  <div class="row">
+    <nav class="col-md-3 col-lg-2 sidebar p-3">
+      <h5 class="text-white mb-1"><i class="bi bi-playstation me-2"></i>RENTAL PS</h5>
+      <small class="text-white-50 d-block mb-4">Admin</small>
+      <div class="nav flex-column gap-1" id="menu">
+        <a href="#" class="nav-link active" data-mod="asset"><i class="bi bi-playstation me-2"></i>Master Unit PS</a>
+        <a href="#" class="nav-link" data-mod="peminjaman"><i class="bi bi-arrow-left-right me-2"></i>Transaksi Sewa</a>
+      </div>
+      <hr class="border-secondary">
+      <label class="text-white-50 small mb-1">Base URL API</label>
+      <input id="baseUrl" class="form-control form-control-sm" value="https://api.melangkah.my.id">
+    </nav>
+
+    <main class="col-md-9 col-lg-10 p-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <div>
+          <h3 id="title" class="mb-0"></h3>
+          <small id="subtitle" class="text-muted"></small>
+        </div>
+        <div class="d-flex gap-2">
+          <button id="btnRefresh" class="btn btn-outline-secondary"><i class="bi bi-arrow-clockwise"></i> Muat ulang</button>
+          <button id="btnAdd" class="btn btn-brand"><i class="bi bi-plus-lg"></i> Tambah data</button>
+        </div>
+      </div>
+      <div id="alertBox"></div>
+      <div class="card">
+        <div class="card-body">
+          <input id="search" class="form-control mb-3" placeholder="Cari di tabel...">
+          <div class="text-center py-4" id="loading"><div class="spinner-border text-secondary"></div></div>
+          <div class="table-responsive"><table class="table table-hover align-middle mb-0" id="tbl"></table></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<!-- Modal form -->
+<div class="modal fade" id="formModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <form class="modal-content" id="theForm">
+      <div class="modal-header"><h5 class="modal-title" id="formTitle"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="formBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
+        <button type="submit" class="btn btn-brand">Simpan</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+
+<!-- Modal detail -->
+<div class="modal fade" id="detailModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Detail data</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="detailBody"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ====== Konfigurasi modul sesuai Postman collection ======
+const MODULES = {
+  asset: {
+    title: 'Manajemen Master Unit PlayStation', subtitle: 'Kelola daftar unit console PlayStation, tarif sewa per jam, dan status ketersediaan', path: 'unit', pk: 'id_unit', pkParam: 'id_unit',
+    actions: ['create', 'edit', 'delete'],
+    fields: [
+      { name: 'nama_unit', label: 'Nama Unit', type: 'text' },
+      { name: 'tipe_ps', label: 'Tipe Console', type: 'select', options: ['PS3', 'PS4', 'PS5'] },
+      { name: 'harga_per_jam', label: 'Harga/Jam', type: 'number' },
+      { name: 'status', label: 'Status', type: 'select', options: ['Tersedia', 'Disewa'] }
+    ]
+  },
+
+
+
+  peminjaman: {
+    title: 'Manajemen Transaksi Penyewaan PS', subtitle: 'Pencatatan dan riwayat Transaksi sewa unit PlayStation', path: 'transaksi_sewa', pk: 'id_unit', pkParam: 'id_unit',
+    actions: ['Create'],
+    
+    fields: [
+        { name: 'id_unit', label: 'Unit PS', type: 'select', remote: 'unit', labelKey: 'id_unit', extra: 'tipe_ps' },
+        { name: 'nama_penyewa', label: 'Nama Penyewa', type: 'text' },
+        { name: 'durasi_jam', label: 'Lama Sewa (jam)', type: 'number' },
+  ]     
+  }
+};
+
+let cur = 'asset', rows = [], editingId = null;
+const $ = id => document.getElementById(id);
+const base = () => $('baseUrl').value.replace(/\/+$/, '');
+const formModal = new bootstrap.Modal($('formModal'));
+const detailModal = new bootstrap.Modal($('detailModal'));
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function notify(msg, type = 'success') {
+  $('alertBox').innerHTML = `<div class="alert alert-${type} alert-dismissible fade show">${esc(msg)}<button class="btn-close" data-bs-dismiss="alert"></button></div>`;
+}
+
+// ====== Helper API ======
+async function api(path, options = {}) {
+  const res = await fetch(`${base()}/${path}`, options);
+  let json = null;
+  try { json = await res.json(); } catch (e) {}
+  if (!res.ok || (json && (json.status === false || json.success === false || json.status === 'error'))) {
+    throw new Error((json && (json.message || json.pesan)) || `Permintaan gagal (HTTP ${res.status})`);
+  }
+  return json;
+}
+// Ambil array data dari berbagai bentuk respons
+function toList(json) {
+  if (Array.isArray(json)) return json;
+  if (json && Array.isArray(json.data)) return json.data;
+  if (json && json.data && typeof json.data === 'object') return [json.data];
+  return [];
+}
+function toObj(json) {
+  const l = toList(json);
+  if (l.length) return l[0];
+  return json && typeof json === 'object' ? json : {};
+}
+
+function totalHarga(durasi, hargaPerJam) {
+  return durasi * hargaPerJam;
+}
+
+// ====== Tampilan tabel ======
+async function load() {
+  const m = MODULES[cur];
+  $('title').textContent = m.title;
+  $('subtitle').textContent = m.subtitle;
+  $('btnAdd').style.display = '';
+  $('loading').style.display = 'block';
+  $('tbl').innerHTML = '';
+  try {
+    rows = toList(await api(`${m.path}/read.php`));
+    render();
+  } catch (e) {
+    notify('Gagal memuat data: ' + e.message + '. Periksa koneksi, Base URL, dan pengaturan CORS API.', 'danger');
+  }
+  $('loading').style.display = 'none';
+}
+
+function render() {
+  const m = MODULES[cur];
+  const q = $('search').value.toLowerCase();
+  const data = rows.filter(r => JSON.stringify(r).toLowerCase().includes(q));
+  if (!data.length) {
+    $('tbl').innerHTML = '<tbody><tr><td class="text-center text-muted py-4">Belum ada data yang cocok.</td></tr></tbody>';
+    return;
+  }
+  const cols = Object.keys(rows[0] || data[0]);
+  let h = '<thead><tr><th>#</th>' + cols.map(c => `<th>${esc(c.replace(/_/g, ' '))}</th>`).join('') + '<th class="text-end">Aksi</th></tr></thead><tbody>';
+  data.forEach((r, i) => {
+    const id = r[m.pk];
+    h += `<tr><td>${i + 1}</td>` + cols.map(c => `<td>${esc(r[c])}</td>`).join('') + '<td class="text-end text-nowrap">';
+    if (m.actions.includes('detail')) h += `<button class="btn btn-sm btn-outline-info me-1" data-act="detail" data-id="${esc(id)}" title="Detail"><i class="bi bi-eye"></i></button>`;
+    if (m.actions.includes('edit')) h += `<button class="btn btn-sm btn-outline-primary me-1" data-act="edit" data-id="${esc(id)}" title="Ubah"><i class="bi bi-pencil"></i></button>`;
+    if (m.actions.includes('delete')) h += `<button class="btn btn-sm btn-outline-danger" data-act="delete" data-id="${esc(id)}" title="Hapus"><i class="bi bi-trash"></i></button>`;
+    h += '</td></tr>';
+  });
+  $('tbl').innerHTML = h + '</tbody>';
+}
+
+// ====== Form ======
+async function openForm(row) {
+  const m = MODULES[cur];
+  editingId = row ? row[m.pk] : null;
+  $('formTitle').textContent = (row ? 'Ubah ' : 'Tambah ') + m.title.replace('Master ', '').replace('Transaksi ', '');
+  let html = '';
+  for (const f of m.fields) {
+    const v = row ? (row[f.name] ?? '') : '';
+    const req = f.optional ? '' : 'required';
+    let input;
+    if (f.type === 'select') {
+      let opts = f.options ? f.options.map(o => ({ v: o, t: o })) : [];
+      if (f.remote) {
+        try {
+          const list = toList(await api(`${f.remote}/read.php`));
+          opts = list.map(o => ({ v: o.id, t: `${o[f.labelKey]}${f.extra ? ' (' + o[f.extra] + ')' : ''}` }));
+        } catch (e) { notify(`Gagal memuat daftar ${f.remote}: ${e.message}`, 'warning'); }
+      }
+      input = `<select class="form-select" name="${f.name}" ${req}><option value="">Pilih...</option>` +
+        opts.map(o => `<option value="${esc(o.v)}" ${String(o.v) === String(v) ? 'selected' : ''}>${esc(o.t)}</option>`).join('') + '</select>';
+    } else if (f.type === 'textarea') {
+      input = `<textarea class="form-control" name="${f.name}" rows="2" ${req}>${esc(v)}</textarea>`;
+    } else {
+      input = `<input class="form-control" type="${f.type}" name="${f.name}" value="${esc(v)}" ${f.type === 'number' ? 'min="0"' : ''} ${req}>`;
+    }
+    html += `<div class="mb-3"><label class="form-label">${f.label}</label>${input}</div>`;
+  }
+  $('formBody').innerHTML = html;
+  formModal.show();
+}
+
+$('theForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const m = MODULES[cur];
+  const body = {};
+  m.fields.forEach(f => {
+    let v = e.target.elements[f.name].value;
+    if (f.type === 'number' || f.remote) v = v === '' ? v : Number(v);
+    body[f.name] = v;
+  });
+  if (editingId !== null) body[m.pk] = Number(editingId);
+  const url = `${m.path}/${editingId !== null ? 'update' : 'create'}.php`;
+  try {
+    const res = await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    formModal.hide();
+    notify((res && res.message) || 'Data berhasil disimpan.');
+    load();
+  } catch (err) { notify('Gagal menyimpan: ' + err.message, 'danger'); }
+});
+
+// ====== Aksi tabel ======
+$('tbl').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const m = MODULES[cur], id = b.dataset.id, act = b.dataset.act;
+  if (act === 'edit') {
+    const row = rows.find(r => String(r[m.pk]) === id);
+    openForm(row);
+  } else if (act === 'detail') {
+    try {
+      const d = toObj(await api(`${m.path}/detail.php?${m.pkParam}=${encodeURIComponent(id)}`));
+      $('detailBody').innerHTML = '<dl class="row mb-0">' + Object.entries(d).map(([k, v]) =>
+        `<dt class="col-5 text-capitalize">${esc(k.replace(/_/g, ' '))}</dt><dd class="col-7">${esc(v)}</dd>`).join('') + '</dl>';
+      detailModal.show();
+    } catch (err) { notify('Gagal memuat detail: ' + err.message, 'danger'); }
+  } else if (act === 'delete') {
+    if (!confirm('Hapus data ini? Tindakan tidak bisa dibatalkan.')) return;
+    try {
+      const res = await api(`${m.path}/delete.php?${m.pkParam}=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      notify((res && res.message) || 'Data berhasil dihapus.');
+      load();
+    } catch (err) { notify('Gagal menghapus: ' + err.message, 'danger'); }
+  }
+});
+
+// ====== Navigasi ======
+$('menu').addEventListener('click', e => {
+  const a = e.target.closest('a[data-mod]');
+  if (!a) return;
+  e.preventDefault();
+  document.querySelectorAll('#menu .nav-link').forEach(n => n.classList.remove('active'));
+  a.classList.add('active');
+  cur = a.dataset.mod;
+  $('search').value = '';
+  $('alertBox').innerHTML = '';
+  load();
+});
+$('btnAdd').onclick = () => openForm(null);
+$('btnRefresh').onclick = load;
+$('search').oninput = render;
+load();
+</script>
+</body>
+</html>
